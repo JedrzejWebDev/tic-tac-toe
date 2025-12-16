@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tic-Tac-Toe Online</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      #container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-direction: column;
+        min-height: 100vh;
+      }
+
+      #room-status {
+        margin-top: 20px;
+      }
+
+      #player-info {
+        margin-top: 15px;
+      }
+
+      #board {
+        display: grid;
+        grid-template-columns: repeat(3, 100px);
+        grid-template-rows: repeat(3, 100px);
+        border: 1px solid black;
+        margin-top: 20px;
+      }
+
+      .cell {
+        border-right: 1px solid black;
+        border-bottom: 1px solid black;
+      }
+
+      .cell:nth-child(3n) {
+        border-right: none;
+      }
+
+      .cell:nth-last-child(-n + 3) {
+        border-bottom: none;
+      }
+
+      .x {
+        background-image: url("cross.svg");
+        background-size: 80%;
+        background-repeat: no-repeat;
+        background-position: center;
+      }
+
+      .o {
+        background-image: url("circle.svg");
+        background-size: 80%;
+        background-repeat: no-repeat;
+        background-position: center;
+      }
+
+      #game-message {
+        margin-top: 20px;
+        margin-bottom: 10px;
+        min-height: 30px;
+        text-align: center;
+      }
+
+      .refresh {
+        margin-left: 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="container">
+      <div id="room-status"></div>
+      <div id="player-info"></div>
+      <div id="board">
+        <div class="cell" data-row="0" data-col="0"></div>
+        <div class="cell" data-row="0" data-col="1"></div>
+        <div class="cell" data-row="0" data-col="2"></div>
+
+        <div class="cell" data-row="1" data-col="0"></div>
+        <div class="cell" data-row="1" data-col="1"></div>
+        <div class="cell" data-row="1" data-col="2"></div>
+
+        <div class="cell" data-row="2" data-col="0"></div>
+        <div class="cell" data-row="2" data-col="1"></div>
+        <div class="cell" data-row="2" data-col="2"></div>
+      </div>
+      <div id="game-message"></div>
+    </div>
+    <script>
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      const ws = new WebSocket(`${protocol}://${location.host}`);
+
+      const roomStatus = document.querySelector("#room-status");
+      const playerInfo = document.querySelector("#player-info");
+      const cells = document.querySelectorAll(".cell");
+      const messageBox = document.querySelector("#game-message");
+
+      let gameOver = false;
+      let mySymbol = null;
+
+      cells.forEach((cell) => {
+        cell.addEventListener("click", () => {
+          if (gameOver) return;
+
+          const row = cell.dataset.row;
+          const col = cell.dataset.col;
+
+          ws.send(
+            JSON.stringify({
+              type: "move",
+              row: Number(row),
+              col: Number(col),
+            })
+          );
+        });
+      });
+
+      function updateBoard(board) {
+        cells.forEach((cell) => {
+          const r = cell.dataset.row;
+          const c = cell.dataset.col;
+
+          if (board[r][c] === "X") cell.classList.add("x");
+          if (board[r][c] === "O") cell.classList.add("o");
+        });
+      }
+
+      function updatePlayerInfo(isYourTurn) {
+        if (!mySymbol) return;
+
+        if (gameOver) {
+          playerInfo.textContent = `Twój symbol: ${mySymbol}`;
+          return;
+        }
+
+        const turnText = isYourTurn ? "Twoja" : "Przeciwnika";
+        playerInfo.textContent = `Twój symbol: ${mySymbol} | Kolej: ${turnText}`;
+      }
+
+      function showMessage(text) {
+        messageBox.innerHTML = `${text} <span class="refresh">🔄</span>`;
+        gameOver = true;
+
+        updatePlayerInfo();
+
+        document.querySelector(".refresh").onclick = () => {
+          location.reload();
+        };
+      }
+
+      ws.addEventListener("message", (e) => {
+        const msg = JSON.parse(e.data);
+
+        if (msg.type === "playerInfo") {
+          mySymbol = msg.symbol;
+          updatePlayerInfo(msg.yourTurn);
+        } else if (msg.type === "boardUpdate") {
+          updateBoard(msg.board);
+          if (typeof msg.yourTurn !== "undefined") {
+            updatePlayerInfo(msg.yourTurn);
+          }
+        } else if (msg.type === "error") {
+          alert(msg.info);
+        } else if (msg.type === "roomStatus") {
+          roomStatus.textContent = msg.status;
+        } else if (msg.type === "win") {
+          showMessage("Wygrałeś!");
+        } else if (msg.type === "lose") {
+          showMessage("Przegrałeś!");
+        } else if (msg.type === "draw") {
+          showMessage("Remis!");
+        }
+      });
+    </script>
+  </body>
+</html>
