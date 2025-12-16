@@ -4,7 +4,6 @@ import path from "path";
 import { WebSocketServer } from "ws";
 import { fileURLToPath } from "url";
 
-/* ====== ścieżki ====== */
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -20,15 +19,20 @@ const server = http.createServer((req, res) => {
       return;
     }
 
-    res.writeHead(200);
+    let contentType = "text/html";
+    if (file.endsWith(".svg")) contentType = "image/svg+xml";
+    else if (file.endsWith(".js")) contentType = "text/javascript";
+    else if (file.endsWith(".css")) contentType = "text/css";
+
+    res.writeHead(200, { "Content-Type": contentType });
     res.end(data);
   });
 });
 
-/* ====== WEBSOCKET ====== */
+/* ====== WEBSOCKET SERVER ====== */
 const wss = new WebSocketServer({ server });
 
-/* ====== TWOJA LOGIKA GRY (PRAWIE BEZ ZMIAN) ====== */
+/* ====== LOGIKA GRY ====== */
 const rooms = new Map();
 let roomCounter = 0;
 
@@ -53,7 +57,7 @@ function checkWinner(board) {
   ];
 
   for (const line of lines) {
-    if (line[0] && line[0] === line[1] && line[1] === line[2]) {
+    if (line[0] !== "" && line[0] === line[1] && line[1] === line[2]) {
       return line[0];
     }
   }
@@ -71,7 +75,8 @@ function assignRoom(ws) {
     }
   }
 
-  const key = `room-${++roomCounter}`;
+  roomCounter++;
+  const key = `room-${roomCounter}`;
   rooms.set(key, {
     clients: [ws],
     closed: false,
@@ -90,51 +95,98 @@ wss.on("connection", (ws) => {
   const playerIndex = room.clients.indexOf(ws);
   const symbol = playerIndex === 0 ? "X" : "O";
 
+  // Wyślij info o graczu
   ws.send(JSON.stringify({
     type: "playerInfo",
     symbol,
     yourTurn: playerIndex === room.currentTurn,
   }));
 
+  // Aktualizacja statusu pokoju
+  room.clients.forEach(client => {
+    client.send(JSON.stringify({
+      type: "roomStatus",
+      status: `Graczy w pokoju: ${room.clients.length}`
+    }));
+  });
+
   ws.on("message", (data) => {
-    const msg = JSON.parse(data);
+    let msg;
+    try {
+      msg = JSON.parse(data);
+    } catch {
+      ws.send(JSON.stringify({ type: "error", info: "Nieprawidłowy format JSON!" }));
+      return;
+    }
 
     if (msg.type !== "move") return;
-    if (room.gameFinished) return;
-    if (playerIndex !== room.currentTurn) return;
+
+    if (room.clients.length === 1) {
+      ws.send(JSON.stringify({ type: "error", info: "Nie możesz grać sam!" }));
+      return;
+    }
+
+    if (playerIndex !== room.currentTurn) {
+      ws.send(JSON.stringify({ type: "error", info: "To nie jest twoja kolej!" }));
+      return;
+    }
 
     const { row, col } = msg;
-    if (room.board[row][col]) return;
+    if (typeof row !== "number" || typeof col !== "number" || row < 0 || row > 2 || col < 0 || col > 2) {
+      ws.send(JSON.stringify({ type: "error", info: "Nieprawidłowe współrzędne ruchu!" }));
+      return;
+    }
 
+    if (room.board[row][col] !== "") {
+      ws.send(JSON.stringify({ type: "error", info: "To pole jest już zajęte!" }));
+      return;
+    }
+
+    // Wykonanie ruchu
     room.board[row][col] = symbol;
     room.currentTurn = (room.currentTurn + 1) % 2;
 
-    room.clients.forEach((c, i) =>
-      c.send(JSON.stringify({
+    // Aktualizacja planszy dla obu graczy
+    room.clients.forEach((client, index) => {
+      client.send(JSON.stringify({
         type: "boardUpdate",
         board: room.board,
-        yourTurn: i === room.currentTurn,
-      }))
-    );
+        yourTurn: index === room.currentTurn
+      }));
+    });
 
     const result = checkWinner(room.board);
     if (result) {
       room.gameFinished = true;
-      room.clients.forEach((c, i) =>
-        c.send(JSON.stringify({
-          type: result === "draw"
-            ? "draw"
-            : i === (result === "X" ? 0 : 1)
-            ? "win"
-            : "lose",
-        }))
-      );
+      room.clients.forEach((client, index) => {
+        client.send(JSON.stringify({
+          type: result === "draw" ? "draw" : (index === (result === "X" ? 0 : 1) ? "win" : "lose")
+        }));
+      });
+    }
+  });
+
+  ws.on("close", () => {
+    room.clients = room.clients.filter(c => c !== ws);
+
+    if (!room.gameFinished && room.clients.length === 1) {
+      room.gameFinished = true;
+      room.clients[0].send(JSON.stringify({ type: "win" }));
+    }
+
+    room.clients.forEach(client => {
+      client.send(JSON.stringify({
+        type: "roomStatus",
+        status: `Graczy w pokoju: ${room.clients.length}`
+      }));
+    });
+
+    if (room.clients.length === 0) {
+      rooms.delete(roomKey);
     }
   });
 });
 
-/* ====== START ====== */
+/* ====== START SERWERA ====== */
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, () =>
-  console.log("Server running on port", PORT)
-);
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
